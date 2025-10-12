@@ -51,15 +51,18 @@ graph TD
         U7[财务人员] --> UC16((长租用户结算))
         U7 --> UC17((储值卡管理))
         U7 --> UC18((线上收款对账))
-        U7 --> UC19((成本费用管理))
-        U7 --> UC20((与财务系统对接))
+        U7 --> UC19((维修/保险/ETC结算))
+        U7 --> UC20((发票管理))
+        U7 --> UC20_A((与财务系统对接))
     end
 
     subgraph "安全与监控"
         U8[安全监控员] --> UC21((实时GPS监控))
-        U8 --> UC22((驾驶行为分析))
-        U8 --> UC23((车辆安全告警))
-        U8 --> UC24((应急预案处置))
+        U8[安全监控员] --> UC22((驾驶行为分析))
+        U8[安全监控员] --> UC23((车辆保养/车龄告警))
+        U8[安全监控员] --> UC24((车辆载重监控))
+        U8[安全监控员] --> UC24_A((违章信息处理))
+        U5[调度员] --> UC24_B((应急预案管理))
     end
 
     subgraph "系统与门户"
@@ -71,7 +74,7 @@ graph TD
 
 ## 3. 类图
 
-类图描述了系统的核心领域模型，展示了关键实体及其之间的关系。
+类图描述了系统的核心领域模型，展示了关键实体及其之间的关系。**（已根据排班重点需求深化）**
 
 ```mermaid
 classDiagram
@@ -84,8 +87,8 @@ classDiagram
     class Driver {
         +String driverId
         +String licenseNumber
-        +Int workedDays
-        +Int restedDays
+        +Int totalWorkedDays
+        +Int totalRestedDays
     }
     User <|-- Driver
 
@@ -105,20 +108,38 @@ classDiagram
         +List~Station~ stations
     }
 
-    class Schedule {
-        +String scheduleId
-        +Date date
-        +List~Shift~ shifts
+    class ShiftTemplate {
+        +String templateId
+        +String name
+        +ShiftType type
+        +ShiftMode mode
+        +PassengerCategory category
+        +String defaultStartTime
+        +String defaultEndTime
     }
 
     class Shift {
         +String shiftId
-        +String startTime
-        +String endTime
-        +ShiftType type
+        +Date date
         +ShiftStatus status
     }
-    Schedule "1" -- "N" Shift
+    ShiftTemplate "1" -- "N" Shift
+
+    class RoutePlan {
+        +String planId
+        +String name
+        +Route startRoute
+        +Route returnRoute
+        +Int executionOrder
+    }
+
+    class DriverScheduleConfig {
+        +String configId
+        +Int workRotationOrder
+        +Int restRotationOrder
+        +Int currentRotationLaps
+    }
+    Driver "1" -- "1" DriverScheduleConfig
 
     class Roster {
         +String rosterId
@@ -126,10 +147,13 @@ classDiagram
         +Driver driver
         +Vehicle vehicle
         +Shift shift
+        +RoutePlan routePlan
     }
+
     Roster -- Driver
     Roster -- Vehicle
     Roster -- Shift
+    Roster -- RoutePlan
 
     class Ticket {
         +String ticketId
@@ -280,12 +304,11 @@ graph TD
 2.  **API网关**: 作为系统的唯一入口，负责请求路由、鉴权、限流、日志记录等。
 3.  **微服务层**:
     -   **用户服务**: 统一管理用户信息、角色和权限。
-    -   **票务服务**: 处理所有售检票逻辑，并与第三方支付、IC卡系统集成。
-    -   **调度排班服务**: 系统的核心，负责线路、班次、司机排班等复杂调度逻辑。
+    -   **票务服务**: 处理所有售检票逻辑。它将通过独立的适配器层（Adapter Layer）与不同的支付渠道进行解耦集成：通过API网关调用第三方支付（如支付宝、微信支付）；与IC卡系统进行专线或接口集成；并为大客户财务系统提供对账接口以支持转账、支票等线下支付方式的核销。
+    -   **调度排班服务**: **系统的绝对核心**。该服务不仅负责常规的线路、班次、司机排班等基础调度功能，**还需内置一套灵活的规则引擎或优化算法**，以处理需求中提到的司机轮询、线路圈数、班次模式等复杂业务逻辑。其设计的优劣直接关系到运营效率和成本，是整个项目的技术关键点和难点。
     -   **运营管理服务**: 负责车辆、员工、场站等基础数据管理。
     -   **财务服务**: 对接内部财务系统，处理结算、对账等。
     -   **定位与GIS服务**: 接收和处理车辆GPS数据，提供简单的GIS功能（如路线规划、行车分析）。
-    -   **决策分析服务**: 基于业务数据和GPS数据进行数据分析，为决策提供支持。
 4.  **数据存储层**: 根据数据特性采用不同的存储方案。业务核心数据使用关系型数据库保证事务一致性，GPS和日志等数据使用NoSQL数据库以获得更好的写入和查询性能。
 5.  **第三方集成**: 与外部系统解耦，通过定义清晰的接口进行集成。
 
@@ -293,6 +316,7 @@ graph TD
 
 | 风险类别 | 风险描述                                                                                              | 可能性 | 影响程度 | 应对策略                                                                                                         |
 | :------- | :---------------------------------------------------------------------------------------------------- | :----- | :------- | :--------------------------------------------------------------------------------------------------------------- |
+| **技术风险** | **排班算法复杂性**: 排班是系统的核心与难点，要设计出既满足复杂业务规则（如轮询、圈数）又能灵活调整的调度算法，技术挑战巨大。 | 高     | 高       | 1. 项目初期采用基于规则的半自动排班，满足基本需求。<br>2. 投入专门的算法工程师进行研究，或与高校、专业公司合作。<br>3. 采用迭代开发，逐步优化算法。 |
 | **技术风险** | **GIS应用开发**: 团队缺乏GIS相关知识背景，学习成本高，可能导致GIS功能模块开发延期或质量不达标。         | 中     | 高       | 1. 引入第三方成熟的地图服务API（如高德、百度地图）。<br>2. 聘请GIS专家或提供专项培训。<br>3. 初期仅实现核心定位和轨迹展示功能。 |
 | **技术风险** | **高并发售票**: 在节假日等高峰期，线上售票系统可能面临高并发压力，导致系统响应缓慢或崩溃。              | 中     | 高       | 1. 设计弹性的、可水平扩展的票务服务。<br>2. 使用消息队列进行流量削峰。<br>3. 引入缓存机制，缓存热门线路和班次信息。<br>4. 进行充分的压力测试。 |
 | **技术风险** | **数据一致性**: 在微服务架构下，跨服务的分布式事务会带来数据一致性的挑战。                                | 高     | 高       | 1. 优先采用最终一致性方案（如基于消息队列的事件驱动模式）。<br>2. 对于强一致性场景，可采用Seata等分布式事务框架。 |
